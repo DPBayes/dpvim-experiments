@@ -117,6 +117,56 @@ def split_Rhat(param_traces, num_splits=2, only_last=None, shuffle=True, transfo
         site: split_Rhat_single_param_site(transforms[site].inv(values)) for site, values in param_traces.items()
     }
 
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+def single_param_site_single_linear_fit(param_trace, only_last=None):
+    """
+    Args:
+        param_trace: A numpy array of shape (num_iterations, ...).
+    """
+    if isinstance(only_last, int):
+        param_trace = param_trace[-only_last:]
+    if np.any(np.isnan(param_trace)):
+        return np.full(param_trace.shape[-1], np.nan), np.full(param_trace.shape[-1], np.nan)
+    x = np.expand_dims(np.linspace(0., 1., len(param_trace)), -1)
+    fit = LinearRegression().fit(x, param_trace)
+    y_pred = fit.predict(x)
+    r2 = r2_score(param_trace, y_pred, multioutput='raw_values')
+    rmse = np.sqrt(np.mean((param_trace - y_pred)**2, axis=0))
+    return fit.coef_.flatten(), fit.intercept_.flatten(), r2, rmse
+
+def single_param_site_linear_fit(param_trace, only_last=None, spacing=None):
+    """
+    Args:
+        param_trace: A numpy array of shape (num_iterations, ...).
+    """
+    if isinstance(only_last, int):
+        param_trace = param_trace[-only_last:]
+    if spacing is None:
+        spacing = len(param_trace) // 10
+    coefs = []
+    intercepts = []
+    r2s = []
+    rmses = []
+    if np.any(np.isnan(param_trace)):
+        coefs = np.nan * np.ones((len(np.arange(0, len(param_trace), spacing)), param_trace.shape[-1]))
+        intercepts = np.nan * np.ones((len(np.arange(0, len(param_trace), spacing)), param_trace.shape[-1]))
+        return coefs, intercepts
+    for start_indx in np.arange(0, len(param_trace), spacing):
+        fit = single_param_site_single_linear_fit(param_trace[start_indx:])
+        coefs.append(fit[0])
+        intercepts.append(fit[1])
+        r2s.append(fit[2])
+        rmses.append(fit[3])
+        # x = np.expand_dims(np.linspace(0., 1., len(param_trace[start_indx:])), -1)
+        # fit = LinearRegression().fit(x, param_trace[start_indx:])
+        # coefs.append(fit.coef_.flatten())
+        # intercepts.append(fit.intercept_.flatten())
+    return np.array(coefs), np.array(intercepts), r2s, rmses
+    #return fit.coef_.flatten(), fit.intercept_
+
+
 from typing import Union, Dict
 def average_params(trace_tuple_or_dict: Union[traces, Dict[str, np.ndarray]], burn_out, num_rhat_splits=2, transforms={'auto_loc': IdentityTransform(), 'auto_scale': biject_to(AutoDiagonalNormal.scale_constraint)}):
     """
@@ -142,6 +192,42 @@ def average_params(trace_tuple_or_dict: Union[traces, Dict[str, np.ndarray]], bu
 
 
     return params, param_unconst_var, param_unconst_Rhat
+
+def average_converged_params(trace_tuple_or_dict: Union[traces, Dict[str, np.ndarray]], spacing=100, threshold=0.05, transforms={'auto_loc': IdentityTransform, 'auto_scale': biject_to(AutoDiagonalNormal.scale_constraint)}):
+    if isinstance(trace_tuple_or_dict, traces):
+        trace_dict = traces_to_dict(trace_tuple_or_dict)
+    elif isinstance(trace_tuple_or_dict, dict):
+        trace_dict = trace_tuple_or_dict
+    else: raise ValueError(f"trace_tuple_or_dict must be a traces tuple or a dict; was {type(trace_tuple_or_dict)}.")
+
+    params = dict()
+    for site, param_trace in trace_dict.items():
+        param_trace = transforms[site].inv(param_trace)
+        coefs, _, r2s, rmses = single_param_site_linear_fit(param_trace, spacing=spacing)
+        assert coefs.shape[-1] == param_trace.shape[-1]
+        first_converged_idxs = np.full(coefs.shape[-1], -1, dtype=np.int64)
+        params_at_site = np.empty(coefs.shape[-1])
+        for i in range(coefs.shape[-1]):
+            converged_indices = np.where(coefs[:,i] < threshold)[0]
+            if len(converged_indices) > 1:
+                first_converged_idxs[i] = converged_indices[0] * spacing
+                params_at_site[i] = np.mean(param_trace[first_converged_idxs[i]:, i])
+        params[site] = transforms[site](params_at_site)
+
+    return params
+
+def load_params_converged(prefix, args, spacing=400, threshold=0.05, **kwargs):
+    stored_model_name = filenamer(prefix, args, **kwargs)
+    stored_model_path = f"{os.path.join(args.stored_model_dir, stored_model_name)}"
+
+    traces_path = f"{stored_model_path}_traces.p"
+    if os.path.exists(traces_path): # always read from traces file, if it exists
+        with open(traces_path, "rb") as f:
+            trace_tuple_or_dict = pickle.load(f) # type: traces
+    else: # error if traces file does not exists and average over last epochs is requested
+        raise ValueError(f"You asked to average over converged burn out, but no traces file is available at {traces_path}")
+
+    return average_converged_params(trace_tuple_or_dict, spacing=spacing, threshld=threshold)
 
 def load_params(prefix, args, num_rhat_splits=2, burn_out=None, **kwargs):
     """

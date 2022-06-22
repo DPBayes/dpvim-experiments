@@ -9,7 +9,7 @@ from twinify.model_loading import load_custom_numpyro_model
 from twinify.infer import InferenceException
 from twinify.sampling import sample_synthetic_data, reshape_and_postprocess_synthetic_data
 
-from utils import filenamer, fit_model1, load_params, traces
+from utils import filenamer, fit_model1, load_params, traces, load_params_converged
 
 def main():
     parser = argparse.ArgumentParser(fromfile_prefix_chars="%")
@@ -25,12 +25,20 @@ def main():
     parser.add_argument("--k", default=50, type=int, help="Mixture components in fit (for automatic modelling only).")
     parser.add_argument("--num_epochs", "-e", default=200, type=int, help="Number of training epochs.")
     parser.add_argument("--num_synthetic_data_sets", "--M", default=100, type=int, help="Number of synthetic data sets to apply the downstream")
-    parser.add_argument("--avg_over", default=1, type=int, help="Model parameters are averaged over the last avg_over epochs in the parameter traces, to mitigate influence of gradient noise.")
+    parser.add_argument("--avg_over", default=1, type=str, help="Model parameters are averaged over the last avg_over epochs in the parameter traces, to mitigate influence of gradient noise. Integer or 'converged'.")
+    parser.add_argument("--convergence_test_threshold", default=0.05, type=float)
+    parser.add_argument("--convergence_test_spacing", default=100, type=int)
 
     args, unknown_args = parser.parse_known_args()
 
     if args.output_dir is None:
         args.output_dir = args.stored_model_dir
+
+    if args.avg_over == "converged":
+        avg_prefix = "avgconverged"
+    else:
+        args.avg_over = int(args.avg_over)
+        avg_prefix = "" if args.avg_over == 1 else f"avg{args.avg_over}_"
 
     ########################################## Read original data
     # read the whole UKB data
@@ -91,7 +99,10 @@ def main():
     downstream_results = []
 
     # read posterior params from file
-    model_params, _, params_Rhat = load_params(args.prefix, args)
+    if args.avg == 'converged':
+        model_params = load_params_converged(args.prefix, "wholepop", args, threshold=args.convergence_test_threshold, spacing=args.convergence_test_spacing)
+    else:
+        model_params, _, params_Rhat = load_params(args.prefix, args)
 
     # sample synthetic data
     num_synthetic = len(train_df_whole["assessment_center"])
@@ -110,7 +121,6 @@ def main():
 
 
     ## store results
-    avg_prefix = "" if args.avg_over == 1 else f"avg{args.avg_over}_"
     wholepop_output_name = "downstream_results_" + avg_prefix + filenamer(args.prefix, args)
     wholepop_output_path = f"{os.path.join(args.output_dir, wholepop_output_name)}.p"
     with open(wholepop_output_path, "wb") as f:
