@@ -5,9 +5,9 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from twinify.mixture_model import MixtureModel
-from twinify.model_loading import TModelFunction
+from twinify.model_loading import TModelFunction, TGuideFunction
 import argparse
-from typing import Iterable
+from typing import Iterable, Tuple
 from collections import OrderedDict
 from functools import partial
 
@@ -68,14 +68,9 @@ def adjusted_onehot_encode(x, num_values, reference_idx):
     encoded = onehot_encode(x, num_values)
     return jnp.hstack((encoded[:, :reference_idx], encoded[:, (reference_idx+1):]))
 
-def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str], ori_df: pd.DataFrame) -> TModelFunction:
+def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str], ori_df: pd.DataFrame) -> Tuple[TModelFunction, TGuideFunction]:
     model_args_parser = argparse.ArgumentParser("Model 1")
-    model_args_parser.add_argument('--scale_cat_priors', action='store_true', default=False, help='Normalise Dirichlet priors by dividing with number of categories.')
-    model_args_parser.add_argument('--scale_mix_priors', action='store_true', default=False, help='Normalise Dirichlet priors for mixture weights by dividing with number of categories.')
     model_args_parser.add_argument('--init_scale', type=float, default=0.1, help='Initial value for scales in variational AutoDiagonalNormal.')
-    model_args_parser.add_argument('--disable_regression_intercept', action='store_true', default=False, help='Disable use of an intercept term in the Poisson regression part of the model.')
-    model_args_parser.add_argument('--adjusted_regression', action='store_true', default=False, help='Adjust the regression coefficients to the reference groups of each category.')
-    model_args_parser.add_argument('--regression_only', action='store_true', default=False, help='Learn only the Poisson regression part of the model, i.e., skip the mixture model for regressors.')
     args = model_args_parser.parse_args(unparsed_args, twinify_args)
 
     k = args.k
@@ -88,25 +83,6 @@ def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str]
         reference_indices[feature] = idx
         d_sizes[feature] = len(ori_df[feature].astype('category').cat.categories)
 
-    prior_scale_age_group = 1.
-    prior_scale_ethnicities = 1.
-    prior_scale_sex = 1.
-    prior_scale_deprivation = 1.
-    prior_scale_education = 1.
-    prior_scale_center = 1.
-    prior_scale_pis = 1.
-
-    if args.scale_cat_priors:
-        prior_scale_age_group = 1./d_sizes['age_group']
-        prior_scale_sex = 1./d_sizes['sex']
-        prior_scale_ethnicities = 1./d_sizes['ethnicity']
-        prior_scale_deprivation = 1./d_sizes['deprivation']
-        prior_scale_education = 1./d_sizes['education']
-        prior_scale_center = 1./d_sizes['assessment_center']
-
-    if args.scale_mix_priors:
-        prior_scale_pis = 1./k
-
 
     def model(X=None, y=None, num_obs_total=None):
         d = 6
@@ -114,17 +90,11 @@ def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str]
 
         if y is not None:
             assert X is not None
-            batch_size = y.shape[0]
-
-        if X is not None:
+            batch_size = X.shape[0]
+            assert y.shape[0] == batch_size
             assert d == X.shape[1]
-            if y is None:
-                batch_size = X.shape[0]
-            else:
-                assert X.shape[0] == batch_size
-        elif args.regression_only:
-            raise ValueError("Using the model with regression_only requires X to not be None.")
-
+        else:
+            assert X is None
 
         if num_obs_total is None:
             num_obs_total = batch_size
@@ -132,31 +102,30 @@ def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str]
         ############## PRIORs ##################
 
         # Prior for mixture model of regressors
-        if not args.regression_only:
-            age_group_probs = sample('age_group_probs', dists.Dirichlet(jnp.ones((k, d_sizes['age_group']))*prior_scale_age_group))
-            age_group_dist = dists.Categorical(probs=age_group_probs)
+        age_group_probs = sample('age_group_probs', dists.Dirichlet(jnp.ones((k, d_sizes['age_group']))))
+        age_group_dist = dists.Categorical(probs=age_group_probs)
 
-            sex_probs = sample('sex_probs', dists.Beta(jnp.ones((k,))*prior_scale_sex, jnp.ones((k,))*prior_scale_sex))
-            sex_dist = dists.Bernoulli(probs=sex_probs)
+        sex_probs = sample('sex_probs', dists.Beta(jnp.ones((k,)), jnp.ones((k,))))
+        sex_dist = dists.Bernoulli(probs=sex_probs)
 
-            ethnicity_probs = sample('ethnicity_probs', dists.Dirichlet(jnp.ones((k, d_sizes['ethnicity']))*prior_scale_ethnicities))
-            ethnicity_dist = dists.Categorical(probs=ethnicity_probs)
+        ethnicity_probs = sample('ethnicity_probs', dists.Dirichlet(jnp.ones((k, d_sizes['ethnicity']))))
+        ethnicity_dist = dists.Categorical(probs=ethnicity_probs)
 
-            deprivation_probs = sample('deprivation_probs', dists.Dirichlet(jnp.ones((k, d_sizes['deprivation']))*prior_scale_deprivation))
-            deprivation_dist = dists.Categorical(probs=deprivation_probs)
+        deprivation_probs = sample('deprivation_probs', dists.Dirichlet(jnp.ones((k, d_sizes['deprivation']))))
+        deprivation_dist = dists.Categorical(probs=deprivation_probs)
 
-            education_probs = sample('education_probs', dists.Dirichlet(jnp.ones((k, d_sizes['education']))*prior_scale_education))
-            education_dist = dists.Categorical(probs=education_probs)
+        education_probs = sample('education_probs', dists.Dirichlet(jnp.ones((k, d_sizes['education']))))
+        education_dist = dists.Categorical(probs=education_probs)
 
-            center_probs = sample('assessment_center_probs', dists.Dirichlet(jnp.ones((k, d_sizes['assessment_center']))*prior_scale_center))
-            center_dist = dists.Categorical(probs=center_probs)
+        center_probs = sample('assessment_center_probs', dists.Dirichlet(jnp.ones((k, d_sizes['assessment_center']))))
+        center_dist = dists.Categorical(probs=center_probs)
 
-            pis = sample('pis_probs', dists.Dirichlet(jnp.ones(k)*prior_scale_pis))
+        pis = sample('pis_probs', dists.Dirichlet(jnp.ones(k)))
 
-            mixture_dist = MixtureModel(
-                [age_group_dist, sex_dist, ethnicity_dist, deprivation_dist, education_dist, center_dist],
-                pis
-            )
+        mixture_dist = MixtureModel(
+            [age_group_dist, sex_dist, ethnicity_dist, deprivation_dist, education_dist, center_dist],
+            pis
+        )
 
         # Set up Poisson regression: this sets the prior for the regression weights
         # and also prepares functions that convert each categorical into (adjusted) one-hot vectors
@@ -164,30 +133,22 @@ def model_factory(twinify_args: argparse.Namespace, unparsed_args: Iterable[str]
         poisson_coefs = []
         feature_encoders = []
         for feature, d_size in d_sizes.items():
-            adjusted_d_size = d_size - 1 if args.adjusted_regression else d_size
+            adjusted_d_size = d_size - 1
             d_onehot += adjusted_d_size
 
             feature_coefs = sample(f"covid_weight_{feature}", dists.Normal(jnp.zeros(adjusted_d_size), jnp.ones(adjusted_d_size)))
             poisson_coefs.append(feature_coefs)
-            if args.adjusted_regression:
-                feature_encoders.append(partial(adjusted_onehot_encode, num_values=d_size, reference_idx=reference_indices[feature]))
-            else:
-                feature_encoders.append(partial(onehot_encode, num_values=d_size))
+            feature_encoders.append(partial(adjusted_onehot_encode, num_values=d_size, reference_idx=reference_indices[feature]))
 
         covid_test_weight = jnp.concatenate(poisson_coefs)
         assert covid_test_weight.shape == (d_onehot,)
 
-        if not args.disable_regression_intercept:
-            covid_test_intercept = sample("covid_intercept", dists.Normal(0., 1.))
-        else:
-            covid_test_intercept = 0.
+        covid_test_intercept = sample("covid_intercept", dists.Normal(0., 1.))
 
         ############# LIKELIHOOD ####################
 
         with plate('batch', num_obs_total, batch_size):
-            if not args.regression_only:
-                X = sample('X', mixture_dist, obs=X)
-
+            X = sample('X', mixture_dist, obs=X)
 
             encoded_X = jnp.hstack([
                 encode(X[:, i]) for i, encode in enumerate(feature_encoders)

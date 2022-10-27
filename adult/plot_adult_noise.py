@@ -12,21 +12,18 @@ from numpyro.distributions.transforms import SoftplusTransform
 parser = argparse.ArgumentParser(fromfile_prefix_chars="%")
 parser.add_argument("--num_epochs", "-e", default=4000, type=int, help="Number of training epochs.")
 parser.add_argument("--sampling_ratio", "-q", default=0.01, type=float, help="Subsampling ratio for DP-SGD.")
-parser.add_argument("--output_path", type=str, default="./results", help="Path to folder in which to store parameter traces; defaults to '../results'")
-parser.add_argument("--figure_path", type=str, default="./figures", help="Path to folder in which to store parameter traces; defaults to '../results'")
-parser.add_argument("--init_auto_scale", type=float, default=0.1, help="Initial std for the VI posterior")
+parser.add_argument("--results_path", type=str, default="./results/", help="Path to folder in which parameter traces are stored'")
+parser.add_argument("--figure_path", type=str, default="./figures")
+parser.add_argument("--init_auto_scale", type=float, default=1.0, help="Initial std for the VI posterior")
 parser.add_argument("--optim", type=str, default="adam", help="Gradient optimizer")
 parser.add_argument("--sgd_lr", type=float, default=1e-6, help="Learning rate for the SGD optimizer")
-
 args, unknown_args = parser.parse_known_args()
-
-args.minmax_normalize = False
 
 ## load data
 from main_adult import model, add_intercept
 from load_adult import preprocess_adult, load_orig_data
 
-preprocessed_train_data, preprocessed_test_data, encodings, data_description = preprocess_adult(minmax_normalize=args.minmax_normalize)
+preprocessed_train_data, preprocessed_test_data, encodings, data_description = preprocess_adult()
 
 X_train = preprocessed_train_data.copy()
 y_train = X_train.pop("income")
@@ -56,18 +53,14 @@ guide = AutoDiagonalNormal(model, init_scale=args.init_auto_scale)
 num_epochs = args.num_epochs
 q = args.sampling_ratio
 
-if args.minmax_normalize:
-    C_ng = 0.1 # chosen by hand
-    C_vanilla = 2.0 # chosen by hand
-    C_aligned = 2.0 # chosen by hand
-    C_aligned_ng = 0.1 # chosen by hand
-    C_precon = 3.0 # chosen by hand
-else:
-    C_ng = 0.1 # chosen by hand
-    C_vanilla = 3.0 # chosen by hand
-    C_aligned = 3.0 # chosen by hand
-    C_aligned_ng = 0.1 # chosen by hand
-    C_precon = 4.0 # chosen by hand
+N_train = len(X_train)
+init_auto_scale = args.init_auto_scale
+
+C_ng = 0.1 # chosen by hand
+C_vanilla = 3.0 # chosen by hand
+C_aligned = 3.0 # chosen by hand
+C_aligned_ng = 0.1 # chosen by hand
+C_precon = 4.0 # chosen by hand
 
 Cs = {
     'ng': C_ng,
@@ -77,23 +70,18 @@ Cs = {
     'precon': C_precon
 }
 
-
-N_train = len(X_train)
-init_auto_scale = args.init_auto_scale
-
-
 ######
 ## filename template
-def filenamer(variant, suffix, C, args=args):
-    dp_name_part = f"eps{args.epsilon}"
+def filenamer(variant, suffix, C):
     if args.optim == "adam":
-        return f"{args.output_path}/adult_{variant}_ne{num_epochs}_C{C}_q{q}_{dp_name_part}_auto_scale{args.init_auto_scale}_seed{args.seed}_minmax{args.minmax_normalize}_optim{args.optim}_{suffix}"
+        return f"{args.results_path}/adult_{variant}_ne{num_epochs}_C{C}_q{q}_eps{args.epsilon}_auto_scale{args.init_auto_scale}_seed{seed}_optim{args.optim}_{suffix}"
     elif args.optim == "sgd":
-        return f"{args.output_path}/adult_{variant}_ne{num_epochs}_C{C}_q{q}_{dp_name_part}_auto_scale{args.init_auto_scale}_seed{args.seed}_minmax{args.minmax_normalize}_optim{args.optim}_lr{args.sgd_lr}_{suffix}"
+        return f"{args.results_path}/adult_{variant}_ne{num_epochs}_C{C}_q{q}_eps{args.epsilon}_auto_scale{args.init_auto_scale}_seed{seed}_optim{args.optim}_lr{args.sgd_lr}_{suffix}"
+    ##
 ##
 
 # fit non-dp svi
-nondp_filename = f"{args.output_path}/adult_nondp_params_auto_scale0.1_T100000_seed123_minmax{args.minmax_normalize}.p"
+nondp_filename = f"{args.results_path}/adult_nondp_params_auto_scale0.1_T100000_seed123.p"
 if not os.path.exists(nondp_filename):
     from numpyro.infer.svi import SVI
     from numpyro.infer import Trace_ELBO
@@ -139,7 +127,7 @@ for variant in variants:
         args.epsilon = epsilon
         for seed_iter, seed in enumerate(seeds):
             args.seed = seed
-            trace = pd.read_pickle(filenamer(variant, "trace", Cs[variant], args) + ".p")
+            trace = pd.read_pickle(filenamer(variant, "trace", Cs[variant]) + ".p")
             trace_dict = {key: np.vstack([elem[key] for elem in trace]) for key in trace[0].keys()}
             trace_dict["auto_scale"] = SoftplusTransform().inv(trace_dict["auto_scale"])
 
@@ -234,5 +222,5 @@ for variant in variants:
     axis.set_ylabel("MSE")
     axis.legend()
     plt.subplots_adjust(top=0.8)
-    plt.savefig(f"{args.figure_path}/std_mseerror_linreg_{variant}_{optim_fname_part}_init_scale{init_auto_scale}_minmax{args.minmax_normalize}.pdf", format="pdf", bbox_inches="tight")
+    plt.savefig(f"{args.figure_path}/std_mseerror_linreg_{variant}_{optim_fname_part}_init_scale{init_auto_scale}.pdf", format="pdf", bbox_inches="tight")
     plt.close()

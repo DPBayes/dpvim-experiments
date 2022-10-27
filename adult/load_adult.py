@@ -51,7 +51,7 @@ def load_orig_data():
 
     return train_data.copy(), test_data.copy()
 
-def preprocess_adult(minmax_normalize=False):
+def preprocess_adult():
     train_data, test_data = load_orig_data()
     data_description = orig_data_description.copy()
     ## remove the "education-num" feature as it is one-to-one with the "education"
@@ -73,8 +73,8 @@ def preprocess_adult(minmax_normalize=False):
 
 
     ## Encode categorical variables
-    preprocessed_train_data = pd.DataFrame() 
-    preprocessed_test_data = pd.DataFrame() 
+    preprocessed_train_data = pd.DataFrame()
+    preprocessed_test_data = pd.DataFrame()
 
     encodings = {}
 
@@ -98,16 +98,12 @@ def preprocess_adult(minmax_normalize=False):
 
 
     ## z-normalize the continuous features
-    from sklearn.preprocessing import scale, minmax_scale
+    from sklearn.preprocessing import scale
 
     for key, value in data_description.items():
         if value == "continuous":
-            if minmax_normalize:
-                preprocessed_train_data[key] = minmax_scale(preprocessed_train_data[key])
-                preprocessed_test_data[key] = minmax_scale(preprocessed_test_data[key])
-            else:
-                preprocessed_train_data[key] = scale(preprocessed_train_data[key])
-                preprocessed_test_data[key] = scale(preprocessed_test_data[key])
+            preprocessed_train_data[key] = scale(preprocessed_train_data[key])
+            preprocessed_test_data[key] = scale(preprocessed_test_data[key])
 
     ## label targets
     target_map = {"<=50K": 0, ">50K": 1}

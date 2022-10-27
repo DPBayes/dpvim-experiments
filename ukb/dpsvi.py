@@ -493,7 +493,7 @@ class AlignedNaturalGradientDPSVI(PXGradientSVI):
         # take step
         svi_state = self._apply_gradient(svi_state, gradient)
 
-        return svi_state, loss, per_example_grads
+        return svi_state, loss
 
 class NaturalGradientDPSVI(PXGradientSVI):
     """
@@ -623,7 +623,7 @@ class NaturalGradientDPSVI(PXGradientSVI):
         # take step
         svi_state = self._apply_gradient(svi_state, gradient)
 
-        return svi_state, loss, per_example_grads
+        return svi_state, loss
 
 
 class PreconditionedGradientDPSVI(PXGradientSVI):

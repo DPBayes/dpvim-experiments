@@ -4,12 +4,11 @@
 python create_params_adult.py
 
 # set run params
-variant="all" # which variant of DPVI to run, choices are: vanilla, precon (preconditioning/scaling), ng (natural gradients), aligned, aligned_ng, all
-init_auto_scale=1.0 # initial value for posterior scale parameters
+variant="all"
+init_auto_scale=1.0
 num_epochs=4000
 
-# loop over the parameter file and dispatch a run for each parameter instance
-mkdir -p ./results/
+# loop over the parameter file
 while read p; do
     epsilon=$(echo $p | awk '{print $1}')
     seed=$(echo $p | awk '{print $2}')
