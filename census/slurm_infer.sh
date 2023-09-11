@@ -8,8 +8,6 @@ module load anaconda gcc
 source activate dpvim
 export PYTHONUNBUFFERED=1
 
-BASE_FOLDER="/scratch/cs/synthetic-data-twins" # set to root level for outputs
-
 commit_sha=$(git rev-parse --short HEAD)
 echo "Commit of code repo ${commit_sha}"
 
@@ -27,13 +25,13 @@ sampling_ratio=0.01
 ## Parameters to set manually
 save_traces_flag="--save_traces"
 
-output_dir="${BASE_FOLDER}/dpvim/census/init${init_scale}/adjusted/" # the directory to store the twinify output
+output_dir="./results/init${init_scale}/" # the directory to store the output
 mkdir -p $output_dir
 
 ############## Run twinify
 numpyro_model_path="model_adjusted.py"
-log_file_dir="${BASE_FOLDER}/dpvim/census/logs/"
+log_file_dir="./logs/"
 mkdir -p $log_file_dir
 
-input_data_path="${BASE_FOLDER}/dpvim/census/USCensus1990.data.txt"
+input_data_path="./USCensus1990.data.txt"
 srun --output "${log_file_dir}/task_number_%A_%a.out" python infer.py $input_data_path $numpyro_model_path $output_dir --dpvi_flavour="${dpvi_alg}" --epsilon=$eps --seed=$infer_seed --k=16 --num_epochs=$n_epochs --clipping_threshold=$clipping_threshold $save_traces_flag --init_scale=$init_scale --sampling_ratio=$sampling_ratio
